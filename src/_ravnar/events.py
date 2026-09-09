@@ -83,10 +83,6 @@ class EventProcessor:
         self._messages: dict[str, orm.Message] = {}
 
         self._progress = RunProgress.NOT_STARTED
-        # Set when the run is stopped by the user (client disconnect). A stopped
-        # run keeps its partial (unfinished) messages on extract so the
-        # interrupted answer survives in history.
-        self._stopped = False
         self._text_message_data: dict[str, TextMessageData] = {}
         self._tool_call_data: dict[str, ToolCallData] = {}
         self._tool_result_data: dict[str, ToolResultData] = {}
@@ -557,14 +553,6 @@ class EventProcessor:
         except jsonpatch.JsonPatchException:
             return None
 
-    def mark_stopped(self) -> None:
-        """Mark this run as stopped by the user (client disconnect).
-
-        A stopped run keeps its partial (unfinished) messages when extracted, so
-        the interrupted answer survives in history instead of being dropped.
-        """
-        self._stopped = True
-
     def extract(self, *, include_input_message_ids: Collection[str]) -> orm.Run:
         return orm.Run(
             id=self._run_agent_input.run_id,
@@ -578,6 +566,10 @@ class EventProcessor:
         grouped_tool_calls: dict[str, list[ToolCallData]] = {}
         for tcd in self._tool_call_data.values():
             if not tcd.finished:
+                # An unfinished tool call is kept so an interrupted turn survives
+                # in history. Its arguments are likely incomplete (invalid JSON),
+                # but that is already possible for finished tool calls too, so the
+                # client must handle it regardless.
                 span = trace.get_current_span()
                 span.add_event(
                     "unfinished_tool_call",
@@ -589,29 +581,27 @@ class EventProcessor:
                 )
                 self._logger.warn(
                     "tool call",
-                    state="dropped",
+                    state="kept",
                     reason="unfinished",
                     tool_call_id=tcd.tool_call_id,
                     tool_call_name=tcd.tool_call_name,
                     parent_message_id=tcd.parent_message_id,
                 )
-                continue
             grouped_tool_calls.setdefault(tcd.parent_message_id, []).append(tcd)
 
         # Build assistant messages so we have their UUIDs for tool call FKs
         assistant_messages: dict[str, orm.AssistantMessage] = {}
 
         for tmd in self._text_message_data.values():
-            # An unfinished text message is normally dropped, but a user-stopped
-            # run keeps its partial text so the interrupted answer is preserved.
-            if not tmd.finished and not self._stopped:
+            if not tmd.finished:
+                # An unfinished text message is kept so the interrupted answer
+                # survives in history -- its partial content is still valid text.
                 span = trace.get_current_span()
                 span.add_event(
                     "unfinished_text_message",
                     attributes={"message_id": tmd.message_id},
                 )
-                self._logger.warn("text message", state="dropped", reason="unfinished", message_id=tmd.message_id)
-                continue
+                self._logger.warn("text message", state="kept", reason="unfinished", message_id=tmd.message_id)
 
             assistant_messages[tmd.message_id] = orm.AssistantMessage(
                 uid=uuid.uuid4(),
@@ -665,13 +655,14 @@ class EventProcessor:
 
         for rd in self._reasoning_data.values():
             if not rd.finished:
+                # An unfinished reasoning message is kept so the interrupted
+                # turn survives in history -- its partial content is still text.
                 span = trace.get_current_span()
                 span.add_event(
                     "unfinished_reasoning_message",
                     attributes={"message_id": rd.message_id},
                 )
-                self._logger.warn("reasoning message", state="dropped", reason="unfinished", message_id=rd.message_id)
-                continue
+                self._logger.warn("reasoning message", state="kept", reason="unfinished", message_id=rd.message_id)
 
             messages.append(
                 orm.ReasoningMessage(
