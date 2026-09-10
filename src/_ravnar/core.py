@@ -228,12 +228,6 @@ class AgentHandler(SetupTeardownMixin):
                 span.set_status(trace.StatusCode.ERROR, description=str(exc))
                 raise
             finally:
-                # Persist the turn however the stream ended -- normal completion,
-                # an error, or a client disconnect (the user stopped the response
-                # mid-stream). A partial turn still belongs in history and feeds
-                # the next turn; stopping ends a turn early, it does not erase it.
-                # Shield the write so an in-flight cancellation cannot abort it
-                # half-done.
                 if callback is not None:
                     await asyncio.shield(callback(event_processor))
                 span.end()

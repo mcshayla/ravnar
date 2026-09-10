@@ -562,10 +562,7 @@ class EventProcessingCases:
             ),
         )
 
-    def case_unfinished_text_message_is_kept(self, sentinels):
-        # A run stopped mid-stream (client disconnect) never sends the closing
-        # TextMessageEndEvent. The partial text message must still be persisted so
-        # the interrupted answer survives in history and feeds the next turn.
+    def case_unfinished_text_message(self, sentinels):
         create_run_data = schema.CreateRunData(messages=[])
 
         message_id = new_id()
@@ -599,9 +596,7 @@ class EventProcessingCases:
             ),
         )
 
-    def case_unfinished_reasoning_message_is_kept(self, sentinels):
-        # As with text, a reasoning message left open by a mid-stream stop keeps
-        # its partial content -- it is still just a string.
+    def case_unfinished_reasoning_message(self, sentinels):
         create_run_data = schema.CreateRunData(messages=[])
 
         message_id = new_id()
@@ -635,16 +630,12 @@ class EventProcessingCases:
             ),
         )
 
-    def case_unfinished_tool_call_is_kept(self, sentinels):
-        # A tool call left open by a mid-stream stop is kept too. Its arguments
-        # are likely incomplete (invalid JSON here), which is acceptable: a
-        # finished tool call carries no valid-JSON guarantee either, so the client
-        # must handle partial arguments regardless.
+    def case_unfinished_tool_call(self, sentinels):
         create_run_data = schema.CreateRunData(messages=[])
 
         tool_call_id = new_id()
         tool_call_name = "test_tool"
-        args_deltas = ['{"arg": ']  # never closed -- the run stopped mid-arguments
+        args_deltas = ["{", '"arg": ']
         timestamp = new_event_timestamp()
 
         event_stream = [

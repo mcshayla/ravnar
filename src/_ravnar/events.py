@@ -563,14 +563,11 @@ class EventProcessor:
         )
 
     def _extract_messages(self, include_input_message_ids: Collection[str]) -> list[orm.Message]:
+        span = trace.get_current_span()
+
         grouped_tool_calls: dict[str, list[ToolCallData]] = {}
         for tcd in self._tool_call_data.values():
             if not tcd.finished:
-                # An unfinished tool call is kept so an interrupted turn survives
-                # in history. Its arguments are likely incomplete (invalid JSON),
-                # but that is already possible for finished tool calls too, so the
-                # client must handle it regardless.
-                span = trace.get_current_span()
                 span.add_event(
                     "unfinished_tool_call",
                     attributes={
@@ -579,14 +576,6 @@ class EventProcessor:
                         "parent_message_id": tcd.parent_message_id,
                     },
                 )
-                self._logger.warn(
-                    "tool call",
-                    state="kept",
-                    reason="unfinished",
-                    tool_call_id=tcd.tool_call_id,
-                    tool_call_name=tcd.tool_call_name,
-                    parent_message_id=tcd.parent_message_id,
-                )
             grouped_tool_calls.setdefault(tcd.parent_message_id, []).append(tcd)
 
         # Build assistant messages so we have their UUIDs for tool call FKs
@@ -594,14 +583,10 @@ class EventProcessor:
 
         for tmd in self._text_message_data.values():
             if not tmd.finished:
-                # An unfinished text message is kept so the interrupted answer
-                # survives in history -- its partial content is still valid text.
-                span = trace.get_current_span()
                 span.add_event(
                     "unfinished_text_message",
                     attributes={"message_id": tmd.message_id},
                 )
-                self._logger.warn("text message", state="kept", reason="unfinished", message_id=tmd.message_id)
 
             assistant_messages[tmd.message_id] = orm.AssistantMessage(
                 uid=uuid.uuid4(),
@@ -655,14 +640,10 @@ class EventProcessor:
 
         for rd in self._reasoning_data.values():
             if not rd.finished:
-                # An unfinished reasoning message is kept so the interrupted
-                # turn survives in history -- its partial content is still text.
-                span = trace.get_current_span()
                 span.add_event(
                     "unfinished_reasoning_message",
                     attributes={"message_id": rd.message_id},
                 )
-                self._logger.warn("reasoning message", state="kept", reason="unfinished", message_id=rd.message_id)
 
             messages.append(
                 orm.ReasoningMessage(
@@ -676,7 +657,6 @@ class EventProcessor:
 
         for trd in self._tool_result_data.values():
             if trd.tool_call_id not in tool_calls:
-                span = trace.get_current_span()
                 span.add_event(
                     "orphaned_tool_message",
                     attributes={"message_id": trd.message_id, "tool_call_id": trd.tool_call_id},
